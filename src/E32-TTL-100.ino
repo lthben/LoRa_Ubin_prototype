@@ -4,6 +4,9 @@
 * @author Bob Chen (bob-0505@gotmail.com)
 * @date 1 November 2017
 * https://github.com/Bob0505/E32-TTL-100
+
+Device_A: RECEIVER / LoRa gateway
+Device_B: SENDER / LoRa node
 */
 #include <SoftwareSerial.h>
 #include <E32-TTL-100.h>
@@ -12,6 +15,7 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <Button.h>
 
 /*
 need series a 4.7k Ohm resistor between .
@@ -25,7 +29,7 @@ UNO/NANO(5V mode)                E32-TTL-100
 *--------*                      *------*
 */
 
-// D4 is LED_BUILTIN, D0, D1 & D2 reserved for oled shield
+// D4 is LED_BUILTIN, D1 & D2 reserved for oled shield
 #define M0_PIN	D7
 #define M1_PIN	D8
 #define AUX_PIN	A0
@@ -33,6 +37,14 @@ UNO/NANO(5V mode)                E32-TTL-100
 #define SOFT_TX D5
 
 SoftwareSerial softSerial(SOFT_RX, SOFT_TX);  // RX, TX
+
+Button button = Button(D3, PULLUP);
+String displayString = "";
+bool hasActivatedSignal, isHelpComing;//User station
+bool hasRcvdSignal, hasResponded; //Medical station
+long sendTime; //User station. Send every sendInterval if no reply
+const long SENDINTERVAL = 10000;
+  uint8_t SOSmsg = 1; //0 - 255. User station number
 
 //OLED
 #define OLED_RESET D0
@@ -43,7 +55,7 @@ Adafruit_SSD1306 display(OLED_RESET);
 #define YPOS 1
 #define DELTAY 2
 
-#if (SSD1306_LCDHEIGHT != 48)
+#if (SSD1306_LCDHEIGHT != 48) //64x48 pixels
 #error("Height incorrect, please fix Adafruit_SSD1306.h!");
 #endif
 
@@ -128,7 +140,7 @@ void SwitchMode(MODE_TYPE mode)
       digitalWrite(M0_PIN, HIGH);
       digitalWrite(M1_PIN, LOW);
       break;
-      case MODE_2_POWER_SAVIN:
+      case MODE_2_POWER_SAVING:
       digitalWrite(M0_PIN, LOW);
       digitalWrite(M1_PIN, HIGH);
       break;
@@ -198,7 +210,7 @@ RET_STATUS Write_CFG_PDS(struct CFGstruct* pCFG)
   softSerial.write((uint8_t *)pCFG, 6);
 
   WaitAUX_H();
-  delay(1200);  //need ti check
+  delay(1200);  //need to check
 
   return RET_SUCCESS;
 }
@@ -220,7 +232,6 @@ RET_STATUS Read_CFG(struct CFGstruct* pCFG)
     Serial.print("  HEAD:     ");  Serial.println(pCFG->HEAD, HEX);
     Serial.print("  ADDH:     ");  Serial.println(pCFG->ADDH, HEX);
     Serial.print("  ADDL:     ");  Serial.println(pCFG->ADDL, HEX);
-
     Serial.print("  CHAN:     ");  Serial.println(pCFG->CHAN, HEX);
   }
 
@@ -309,8 +320,9 @@ RET_STATUS SettingModule(struct CFGstruct *pCFG)
   //USER-DEFINED
   pCFG->OPTION_bits.trsm_mode =TRSM_FP_MODE;
   pCFG->OPTION_bits.tsmt_pwr = TSMT_PWR_20DB;
-  pCFG->OPTION_bits.wakeup_time = WEAK_UP_TIME_250;
+  pCFG->OPTION_bits.wakeup_time = WAKE_UP_TIME_1000;
   pCFG->OPTION_bits.drive_mode = PP_DRIVE_MODE;
+  pCFG->SPED_bits.air_bps = AIR_BPS_300; //decrease air rate to increase comms range
 
   STATUS = SleepModeCmd(W_CFG_PWR_DWN_SAVE, (void* )pCFG);
 
@@ -327,7 +339,6 @@ RET_STATUS ReceiveMsg(uint8_t *pdatabuf, uint8_t *data_len)
   RET_STATUS STATUS = RET_SUCCESS;
   uint8_t idx;
 
-  SwitchMode(MODE_0_NORMAL);
   *data_len = softSerial.available();
 
   if (*data_len > 0)
@@ -342,29 +353,19 @@ RET_STATUS ReceiveMsg(uint8_t *pdatabuf, uint8_t *data_len)
       Serial.print(" 0x");
       Serial.print(0xFF & *(pdatabuf+idx), HEX);    // print as an ASCII-encoded hexadecimal
     } Serial.println("");
-
-    display.setTextSize(2);
-    display.setTextColor(WHITE);
-    display.setCursor(0, 10);
-    display.print("Rcvd: ");
-    display.println(*pdatabuf);
-    display.display();
-    display.clearDisplay();
   }
   else
   {
     STATUS = RET_NOT_IMPLEMENT;
-    Serial.println("line 353: RET_NOT_IMPLEMENT");
+    // Serial.println("line 353: RET_NOT_IMPLEMENT");
   }
 
   return STATUS;
 }
 
-RET_STATUS SendMsg()
+RET_STATUS SendMsg(uint8_t pdatabuf)
 {
   RET_STATUS STATUS = RET_SUCCESS;
-
-  SwitchMode(MODE_0_NORMAL);
 
   if(ReadAUX()!=HIGH)
   {
@@ -379,24 +380,48 @@ RET_STATUS SendMsg()
   //USER-DEFINED
   //TRSM_FP_MODE
   //Send format : ADDH ADDL CHAN DATA_0 DATA_1 DATA_2 ...
-  uint8_t randomByte = random(0x00,0xFF);
+  // uint8_t randomByte = random(0x00,0xFF);
+
   #ifdef Device_A
-  uint8_t SendBuf[4] = { DEVICE_B_ADDR_H, DEVICE_B_ADDR_L, 0x17, randomByte };	//for A
+  uint8_t SendBuf[4] = { DEVICE_B_ADDR_H, DEVICE_B_ADDR_L, 0x17, pdatabuf };	//for A
   #else
-  uint8_t SendBuf[4] = { DEVICE_A_ADDR_H, DEVICE_A_ADDR_L, 0x17, randomByte };	//for B
+  uint8_t SendBuf[4] = { DEVICE_A_ADDR_H, DEVICE_A_ADDR_L, 0x17, pdatabuf };	//for B
   #endif
   softSerial.write(SendBuf, 4);
 
-  display.setTextSize(2);
-  display.setTextColor(WHITE);
-  display.setCursor(0, 10);
-  display.print("Sent: ");
-  display.println(randomByte);
-  display.display();
-  display.clearDisplay();
-
   return STATUS;
 }
+
+//for the LED_BUILTIN
+void blinkLED()
+{
+  static bool LedStatus = LOW;
+
+  digitalWrite(LED_BUILTIN, LedStatus);
+  LedStatus = !LedStatus;
+}
+
+//for the oled screen
+void displayText(long duration, bool hasDelay=true) {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+  display.setCursor(0, 0);
+  display.println(displayString);
+  display.display();
+  if (hasDelay)
+  {
+    delay(duration);
+    display.clearDisplay();
+    display.display();
+  }
+}
+
+/********************************************************************
+*
+*   MAIN PROGRAMME
+*
+********************************************************************/
 
 //The setup function is called once at startup of the sketch
 void setup()
@@ -421,11 +446,9 @@ void setup()
 
   STATUS = SleepModeCmd(R_CFG, (void* )&CFG);
   STATUS = SettingModule(&CFG);
-
   STATUS = SleepModeCmd(R_MODULE_VERSION, (void* )&MVer);
 
-  // Mode 0 | normal operation
-  SwitchMode(MODE_0_NORMAL);
+  SwitchMode(MODE_2_POWER_SAVING);
 
   //self-check initialization.
   WaitAUX_H();
@@ -439,27 +462,130 @@ void setup()
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);  // initialize with the I2C addr 0x3C (for the 64x48)
   // init done
 
-  // Clear the buffer.
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextColor(WHITE);
-  display.setCursor(0, 0);
-  display.println("LoRa prototype for Ubin Emergency Comms");
+  display.clearDisplay(); //prevent adafruit splash screen
   display.display();
-  delay(4000);
-}
-
-void blinkLED()
-{
-  static bool LedStatus = LOW;
-
-  digitalWrite(LED_BUILTIN, LedStatus);
-  LedStatus = !LedStatus;
+  #ifdef Device_A
+  displayString = "MEDICAL\n STATION";
+  #else
+  displayString = "USER\n STATION";
+  #endif
+  displayText(2000);
 }
 
 // The loop function is called in an endless loop
 void loop()
 {
+  uint8_t data_buf[100], data_len;
+
+  /*************************************************
+  * MEDICAL STATION
+  *************************************************/
+  #ifdef Device_A //RECEIVER "Medical station"
+  if (ReceiveMsg(data_buf, &data_len)==RET_SUCCESS)
+  {
+    hasRcvdSignal = true;
+
+    // blinkLED();
+
+    displayString = "";
+    for (int i=0; i<sizeof(data_len); i++)
+    {
+      displayString += data_buf[i];
+    }
+    String prependStr = "Help\nrequested\nat station\n     #";
+    displayString = prependStr + displayString;
+
+    displayText(2000);
+    // Serial.print("Message received: ");
+    // Serial.println(displayString);
+  }
+  else if (hasRcvdSignal==true && hasResponded==false)
+  {
+    // if (button.uniquePress()) //comment out for automated response
+    // {
+      hasResponded = true;
+
+      SwitchMode(MODE_0_NORMAL);
+
+      uint8_t ack = 255;
+      SendMsg(ack);
+
+      SwitchMode(MODE_2_POWER_SAVING);
+
+      displayString = "\nAcknowledgement\n\nsent!";
+      displayText(1000);
+    // }
+  }
+  else if (hasRcvdSignal==true and hasResponded==true)
+  {
+    hasRcvdSignal = false;
+    hasResponded = false;
+  }
+  else
+  {
+    displayString = "on standby";
+    displayText(0, false);
+    // Serial.println("on standby");
+  }
+
+  /************************************
+  * USER STATION
+  ************************************/
+  #else //Device_B SENDER
+  if (button.uniquePress() && hasActivatedSignal == false && isHelpComing == false)
+  {
+    hasActivatedSignal = true;
+
+    SwitchMode(MODE_1_WAKE_UP);
+
+    if (SendMsg(SOSmsg)==RET_SUCCESS)
+    {
+      Serial.print("Message sent: ");
+      Serial.println(SOSmsg);
+
+      sendTime = millis();
+    }
+  }
+  else if (hasActivatedSignal == true && isHelpComing == false)
+  {
+    displayString = "Help\nrequested.\nWaiting\nfor\nresponse";
+    displayText(0,false);
+
+    if (ReceiveMsg(data_buf, &data_len)==RET_SUCCESS)
+    {
+      if (*data_buf == 255)
+      {
+        displayString = "Message\nacknowledged.\nHelp is on\nthe way.";
+        Serial.println("Message acknowledged");
+        isHelpComing = true;
+      }
+    }
+    else if (millis() - sendTime > SENDINTERVAL && isHelpComing == false) //send again if not received response
+    {
+      SendMsg(SOSmsg);
+      sendTime = millis();
+      displayString = "Sending\nagain ...";
+      displayText(1000);
+      Serial.print("Message sent: ");
+      Serial.println(SOSmsg);
+    }
+  }
+  else if (hasActivatedSignal == true && isHelpComing == true)
+  {
+    isHelpComing = false; //reset
+    hasActivatedSignal = false;
+    Serial.println("resetting");
+    SwitchMode(MODE_2_POWER_SAVING);
+    displayText(2000);
+  }
+  else
+  {
+    displayString = "on standby";
+    displayText(0, false);
+  }
+  #endif
+
+  /*
   uint8_t data_buf[100], data_len;
 
   #ifdef Device_A
@@ -477,4 +603,5 @@ void loop()
   #endif
 
   delay(random(400, 600));
+  */
 }

@@ -25,7 +25,7 @@ enum MODE_TYPE
 {
   MODE_0_NORMAL = 0,
   MODE_1_WAKE_UP,
-  MODE_2_POWER_SAVIN,
+  MODE_2_POWER_SAVING,
   MODE_3_SLEEP,
   MODE_INIT = 0xFF
 };
@@ -77,11 +77,11 @@ enum AIR_CHAN_TYPE
 #define OD_DRIVE_MODE		0x00
 #define PP_DRIVE_MODE		0x01
 
-enum WEAK_UP_TIME_TYPE
+enum WAKE_UP_TIME_TYPE
 {
-  WEAK_UP_TIME_250  = 0x00,
-  WEAK_UP_TIME_1000 = 0x03,
-  WEAK_UP_TIME_2000 = 0x07
+  WAKE_UP_TIME_250  = 0x00,
+  WAKE_UP_TIME_1000 = 0x03,
+  WAKE_UP_TIME_2000 = 0x07
 };
 
 #define DISABLE_FEC			0x00
@@ -116,7 +116,7 @@ struct CFGstruct {
   uint8_t HEAD;
   uint8_t ADDH;
   uint8_t ADDL;
-  struct SPEDstruct   SPED_bits;
+  struct SPEDstruct SPED_bits;
   uint8_t CHAN;
   struct OPTIONstruct OPTION_bits;
 };
@@ -129,7 +129,7 @@ struct MVerstruct {
 };
 #pragma pack(pop)
 
-#define Device_A //USER-DEFINED - Device A is receiver, Device B is sender
+#define Device_B //USER-DEFINED - Device A is receiver, Device B is sender
 
 #define TIME_OUT_CNT	100
 #define MAX_TX_SIZE		58
