@@ -1,12 +1,13 @@
 /**
-* E32-TTL-100 Transceiver Interface
-*
-* @author Bob Chen (bob-0505@gotmail.com)
+* Author: Benjamin Low (Lthben@gmail.com)
+* @date 8 June 2018
+* Description: Modified code of LoRa E32-TTL-100 Transceiver Interface
+* by @author Bob Chen (bob-0505@gotmail.com)
 * @date 1 November 2017
 * https://github.com/Bob0505/E32-TTL-100
-
-Device_A: RECEIVER / LoRa gateway
-Device_B: SENDER / LoRa node
+*
+* Device_A: RECEIVER / simulating medical station with 'respond-to-distress' button
+* Device_B: SENDER / simulating user station with 'call-for-help' button
 */
 #include <SoftwareSerial.h>
 #include <E32-TTL-100.h>
