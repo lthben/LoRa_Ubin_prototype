@@ -6,6 +6,7 @@
 * @date 1 November 2017
 * https://github.com/Bob0505/E32-TTL-100
 *
+* USER NEEDS TO SPECIFY WHICH DEVICE THIS CODE IS FOR in E32-TTL-100.h
 * Device_A: RECEIVER / simulating medical station with 'respond-to-distress' button
 * Device_B: SENDER / simulating user station with 'call-for-help' button
 */
@@ -30,7 +31,7 @@ UNO/NANO(5V mode)                E32-TTL-100
 *--------*                      *------*
 */
 
-// D4 is LED_BUILTIN, D1 & D2 reserved for oled shield
+//E32-TTL-100 pins
 #define M0_PIN	D7
 #define M1_PIN	D8
 #define AUX_PIN	A0
@@ -39,6 +40,7 @@ UNO/NANO(5V mode)                E32-TTL-100
 
 SoftwareSerial softSerial(SOFT_RX, SOFT_TX);  // RX, TX
 
+//button - D3
 Button button = Button(D3, PULLUP);
 String displayString = "";
 bool hasActivatedSignal, isHelpComing;//User station
@@ -47,7 +49,10 @@ long sendTime; //User station. Send every sendInterval if no reply
 const long SENDINTERVAL = 10000;
   uint8_t SOSmsg = 1; //0 - 255. User station number
 
-//OLED
+//alert light - D4
+#define ALERT_PIN D4
+
+//OLED - D0, D1, D2
 #define OLED_RESET D0
 Adafruit_SSD1306 display(OLED_RESET);
 
@@ -60,250 +65,7 @@ Adafruit_SSD1306 display(OLED_RESET);
 #error("Height incorrect, please fix Adafruit_SSD1306.h!");
 #endif
 
-//=== AUX ===========================================+
-bool AUX_HL;
-bool ReadAUX()
-{
-  int val = analogRead(AUX_PIN);
 
-  if(val<50)
-  {
-    AUX_HL = LOW;
-  }else {
-    AUX_HL = HIGH;
-  }
-
-  return AUX_HL;
-}
-
-//return default status
-RET_STATUS WaitAUX_H()
-{
-  RET_STATUS STATUS = RET_SUCCESS;
-
-  uint8_t cnt = 0;
-  uint8_t data_buf[100], data_len;
-
-  while((ReadAUX()==LOW) && (cnt++<TIME_OUT_CNT))
-  {
-    Serial.print(".");
-    delay(100);
-  }
-
-  if(cnt==0)
-  {
-  }
-  else if(cnt>=TIME_OUT_CNT)
-  {
-    STATUS = RET_TIMEOUT;
-    Serial.println(" TimeOut");
-  }
-  else
-  {
-    Serial.println("");
-  }
-
-  return STATUS;
-}
-//=== AUX ===========================================-
-//=== Mode Select ===================================+
-bool chkModeSame(MODE_TYPE mode)
-{
-  static MODE_TYPE pre_mode = MODE_INIT;
-
-  if(pre_mode == mode)
-  {
-    //Serial.print("SwitchMode: (no need to switch) ");  Serial.println(mode, HEX);
-    return true;
-  }
-  else
-  {
-    Serial.print("SwitchMode: from ");  Serial.print(pre_mode, HEX);  Serial.print(" to ");  Serial.println(mode, HEX);
-    pre_mode = mode;
-    return false;
-  }
-}
-
-void SwitchMode(MODE_TYPE mode)
-{
-  if(!chkModeSame(mode))
-  {
-    WaitAUX_H();
-
-    switch (mode)
-    {
-      case MODE_0_NORMAL:
-      // Mode 0 | normal operation
-      digitalWrite(M0_PIN, LOW);
-      digitalWrite(M1_PIN, LOW);
-      break;
-      case MODE_1_WAKE_UP:
-      digitalWrite(M0_PIN, HIGH);
-      digitalWrite(M1_PIN, LOW);
-      break;
-      case MODE_2_POWER_SAVING:
-      digitalWrite(M0_PIN, LOW);
-      digitalWrite(M1_PIN, HIGH);
-      break;
-      case MODE_3_SLEEP:
-      // Mode 3 | Setting operation
-      digitalWrite(M0_PIN, HIGH);
-      digitalWrite(M1_PIN, HIGH);
-      break;
-      default:
-      return ;
-    }
-
-    WaitAUX_H();
-    delay(10);
-  }
-}
-//=== Mode Select ===================================-
-//=== Basic cmd =====================================+
-void cleanUARTBuf()
-{
-  bool IsNull = true;
-
-  while (softSerial.available())
-  {
-    IsNull = false;
-
-    softSerial.read();
-  }
-}
-
-void triple_cmd(SLEEP_MODE_CMD_TYPE Tcmd)
-{
-  uint8_t CMD[3] = {Tcmd, Tcmd, Tcmd};
-  softSerial.write(CMD, 3);
-  delay(50);  //need ti check
-}
-
-RET_STATUS Module_info(uint8_t* pReadbuf, uint8_t buf_len)
-{
-  RET_STATUS STATUS = RET_SUCCESS;
-  uint8_t Readcnt, idx;
-
-  Readcnt = softSerial.available();
-  //Serial.print("softSerial.available(): ");  Serial.print(Readcnt);  Serial.println(" bytes.");
-  if (Readcnt == buf_len)
-  {
-    for(idx=0;idx<buf_len;idx++)
-    {
-      *(pReadbuf+idx) = softSerial.read();
-      Serial.print(" 0x");
-      Serial.print(0xFF & *(pReadbuf+idx), HEX);    // print as an ASCII-encoded hexadecimal
-    } Serial.println("");
-  }
-  else
-  {
-    STATUS = RET_DATA_SIZE_NOT_MATCH;
-    Serial.print("  RET_DATA_SIZE_NOT_MATCH - Readcnt: ");  Serial.println(Readcnt);
-    cleanUARTBuf();
-  }
-
-  return STATUS;
-}
-//=== Basic cmd =====================================-
-//=== Sleep mode cmd ================================+
-RET_STATUS Write_CFG_PDS(struct CFGstruct* pCFG)
-{
-  softSerial.write((uint8_t *)pCFG, 6);
-
-  WaitAUX_H();
-  delay(1200);  //need to check
-
-  return RET_SUCCESS;
-}
-
-RET_STATUS Read_CFG(struct CFGstruct* pCFG)
-{
-  RET_STATUS STATUS = RET_SUCCESS;
-
-  //1. read UART buffer.
-  cleanUARTBuf();
-
-  //2. send CMD
-  triple_cmd(R_CFG);
-
-  //3. Receive configure
-  STATUS = Module_info((uint8_t *)pCFG, sizeof(CFGstruct));
-  if(STATUS == RET_SUCCESS)
-  {
-    Serial.print("  HEAD:     ");  Serial.println(pCFG->HEAD, HEX);
-    Serial.print("  ADDH:     ");  Serial.println(pCFG->ADDH, HEX);
-    Serial.print("  ADDL:     ");  Serial.println(pCFG->ADDL, HEX);
-    Serial.print("  CHAN:     ");  Serial.println(pCFG->CHAN, HEX);
-  }
-
-  return STATUS;
-}
-
-RET_STATUS Read_module_version(struct MVerstruct* MVer)
-{
-  RET_STATUS STATUS = RET_SUCCESS;
-
-  //1. read UART buffer.
-  cleanUARTBuf();
-
-  //2. send CMD
-  triple_cmd(R_MODULE_VERSION);
-
-  //3. Receive configure
-  STATUS = Module_info((uint8_t *)MVer, sizeof(MVerstruct));
-  if(STATUS == RET_SUCCESS)
-  {
-    Serial.print("  HEAD:     0x");  Serial.println(MVer->HEAD, HEX);
-    Serial.print("  Model:    0x");  Serial.println(MVer->Model, HEX);
-    Serial.print("  Version:  0x");  Serial.println(MVer->Version, HEX);
-    Serial.print("  features: 0x");  Serial.println(MVer->features, HEX);
-  }
-
-  return RET_SUCCESS;
-}
-
-void Reset_module()
-{
-  triple_cmd(W_RESET_MODULE);
-
-  WaitAUX_H();
-  delay(1000);
-}
-
-RET_STATUS SleepModeCmd(uint8_t CMD, void* pBuff)
-{
-  RET_STATUS STATUS = RET_SUCCESS;
-
-  Serial.print("SleepModeCmd: 0x");  Serial.println(CMD, HEX);
-  WaitAUX_H();
-
-  SwitchMode(MODE_3_SLEEP);
-
-  switch (CMD)
-  {
-    case W_CFG_PWR_DWN_SAVE:
-    STATUS = Write_CFG_PDS((struct CFGstruct* )pBuff);
-    break;
-    case R_CFG:
-    STATUS = Read_CFG((struct CFGstruct* )pBuff);
-    break;
-    case W_CFG_PWR_DWN_LOSE:
-
-    break;
-    case R_MODULE_VERSION:
-    Read_module_version((struct MVerstruct* )pBuff);
-    break;
-    case W_RESET_MODULE:
-    Reset_module();
-    break;
-
-    default:
-    return RET_INVALID_PARAM;
-  }
-
-  WaitAUX_H();
-  return STATUS;
-}
 //=== Sleep mode cmd ================================-
 
 RET_STATUS SettingModule(struct CFGstruct *pCFG)
@@ -434,13 +196,14 @@ void setup()
   pinMode(M0_PIN, OUTPUT);
   pinMode(M1_PIN, OUTPUT);
   pinMode(AUX_PIN, INPUT);
-  pinMode(LED_BUILTIN, OUTPUT);
+  // pinMode(LED_BUILTIN, OUTPUT);
 
   softSerial.begin(9600);
   Serial.begin(9600);
 
   #ifdef Device_A
   Serial.println("[10-A] ");
+  pinMode(ALERT_PIN, OUTPUT);
   #else
   Serial.println("[10-B] ");
   #endif
@@ -467,6 +230,7 @@ void setup()
   display.display();
   #ifdef Device_A
   displayString = "MEDICAL\n STATION";
+  digitalWrite(ALERT_PIN, HIGH);
   #else
   displayString = "USER\n STATION";
   #endif
@@ -487,6 +251,7 @@ void loop()
     hasRcvdSignal = true;
 
     // blinkLED();
+    digitalWrite(ALERT_PIN, HIGH);
 
     displayString = "";
     for (int i=0; i<sizeof(data_len); i++)
@@ -496,14 +261,16 @@ void loop()
     String prependStr = "Help\nrequested\nat station\n     #";
     displayString = prependStr + displayString;
 
-    displayText(2000);
+    displayText(0,false);
     // Serial.print("Message received: ");
     // Serial.println(displayString);
   }
   else if (hasRcvdSignal==true && hasResponded==false)
   {
-    // if (button.uniquePress()) //comment out for automated response
-    // {
+    if (button.uniquePress()) //comment out for automated response
+    {
+      digitalWrite(ALERT_PIN, LOW);
+
       hasResponded = true;
 
       SwitchMode(MODE_0_NORMAL);
@@ -515,7 +282,7 @@ void loop()
 
       displayString = "\nAcknowledgement\n\nsent!";
       displayText(1000);
-    // }
+    }
   }
   else if (hasRcvdSignal==true and hasResponded==true)
   {
@@ -526,6 +293,7 @@ void loop()
   {
     displayString = "on standby";
     displayText(0, false);
+    digitalWrite(ALERT_PIN, LOW);
     // Serial.println("on standby");
   }
 
@@ -559,16 +327,17 @@ void loop()
         displayString = "Message\nacknowledged.\nHelp is on\nthe way.";
         Serial.println("Message acknowledged");
         isHelpComing = true;
+        displayText(4000);
       }
     }
-    else if (millis() - sendTime > SENDINTERVAL && isHelpComing == false) //send again if not received response
+    else if (millis() - sendTime > SENDINTERVAL) //send again if not received response
     {
       SendMsg(SOSmsg);
       sendTime = millis();
       displayString = "Sending\nagain ...";
-      displayText(1000);
       Serial.print("Message sent: ");
       Serial.println(SOSmsg);
+      displayText(1000);
     }
   }
   else if (hasActivatedSignal == true && isHelpComing == true)
@@ -577,7 +346,6 @@ void loop()
     hasActivatedSignal = false;
     Serial.println("resetting");
     SwitchMode(MODE_2_POWER_SAVING);
-    displayText(2000);
   }
   else
   {
