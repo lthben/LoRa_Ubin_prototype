@@ -129,8 +129,6 @@ struct MVerstruct {
 };
 #pragma pack(pop)
 
-#define Device_B //USER-DEFINED - Device A is receiver, Device B is sender
-
 #define TIME_OUT_CNT	100
 #define MAX_TX_SIZE		58
 

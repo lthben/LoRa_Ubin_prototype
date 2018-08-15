@@ -1,70 +1,81 @@
 /**
 * Author: Benjamin Low (Lthben@gmail.com)
-* @date 8 June 2018
-* Description: Modified code of LoRa E32-TTL-100 Transceiver Interface
+* @date 14 August 2018
+* Description: prototype of a single channel one-to-one LoRa channel
+* for emergency communications
+*
+* LoRa E32-TTL-100 Transceiver Interface
 * by @author Bob Chen (bob-0505@gotmail.com)
 * @date 1 November 2017
 * https://github.com/Bob0505/E32-TTL-100
 *
-* USER NEEDS TO SPECIFY WHICH DEVICE THIS CODE IS FOR in E32-TTL-100.h
-* Device_A: RECEIVER / simulating medical station with 'respond-to-distress' button
-* Device_B: SENDER / simulating user station with 'call-for-help' button
+* need series a 4.7k Ohm resistor between .
+* UNO/NANO(5V mode)                E32-TTL-100
+* *--------*                      *------*
+* | 28     | <------------------> | M0   |
+* | 26     | <------------------> | M1   |
+* | A0     | <------------------> | AUX  |
+* | 10 (Rx)| <---> 4.7k Ohm <---> | Tx   |
+* | 11 (Tx)| <---> 4.7k Ohm <---> | Rx   |
+* *--------*                      *------*
+*
+* LCD library:
+*       https://github.com/olikraus/u8glib
+*
+* LCD product page:
+*       http://www.continental.sg/lcd/products/lcd-128x64
+*
+* 128x64 LCD to Arduino Mega connections:-
+*       VSS - GND
+*       VDD - 5V
+*       RS/CS - 8 (any pin)
+*       R/W/MOSI - 51
+*       E/SCK - 52
+*       PSB - GND
+*       RST - 9 (any pin)
+*       BLA - 5V
+*       BLK - GND
 */
+
+//USER NEEDS TO SPECIFY WHICH DEVICE THIS CODE IS FOR BY COMMENTING OUT ONE BELOW
+#define Device_A // receiver (medical station with 'respond-to-distress' button)
+// #define Device_B // sender (user station with 'call-for-help' button)
+
 #include <SoftwareSerial.h>
 #include <E32-TTL-100.h>
 //OLED
 #include <SPI.h>
 #include <Wire.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
 #include <Button.h>
+#include <U8glib.h>
 
-/*
-need series a 4.7k Ohm resistor between .
-UNO/NANO(5V mode)                E32-TTL-100
-*--------*                      *------*
-| D7     | <------------------> | M0   |
-| D8     | <------------------> | M1   |
-| A0     | <------------------> | AUX  |
-| D10(Rx)| <---> 4.7k Ohm <---> | Tx   |
-| D11(Tx)| <---> 4.7k Ohm <---> | Rx   |
-*--------*                      *------*
-*/
+//LCD screen
+U8GLIB_ST7920_128X64_1X u8g(52, 51, 8, 9);    // SPI Com: SCK = en = 18, MOSI = rw = 16, CS = di = 17
+unsigned long lastShownTime; //blinking effect
+unsigned long emergencyButtonPressTime;
+unsigned long acknowledgeButtonPressTime;
+bool isShow;
+int screenModeNum; //which screen text to display
 
 //E32-TTL-100 pins
-#define M0_PIN	D7
-#define M1_PIN	D8
+#define M0_PIN	28
+#define M1_PIN	26
 #define AUX_PIN	A0
-#define SOFT_RX	D6
-#define SOFT_TX D5
+#define SOFT_RX	10
+#define SOFT_TX 11
 
 SoftwareSerial softSerial(SOFT_RX, SOFT_TX);  // RX, TX
 
-//button - D3
-Button button = Button(D3, PULLUP);
-String displayString = "";
+//button - 3
+Button button = Button(3, PULLUP);
 bool hasActivatedSignal, isHelpComing;//User station
 bool hasRcvdSignal, hasResponded; //Medical station
-long sendTime; //User station. Send every sendInterval if no reply
+unsigned long sendTime; //User station. Send every sendInterval if no reply
 const long SENDINTERVAL = 10000;
-  uint8_t SOSmsg = 1; //0 - 255. User station number
+uint8_t SOSmsg = 1; //0 - 255. User station number
 
-//alert light - D4
-#define ALERT_PIN D4
-
-//OLED - D0, D1, D2
-#define OLED_RESET D0
-Adafruit_SSD1306 display(OLED_RESET);
-
-#define NUMFLAKES 10
-#define XPOS 0
-#define YPOS 1
-#define DELTAY 2
-
-#if (SSD1306_LCDHEIGHT != 48) //64x48 pixels
-#error("Height incorrect, please fix Adafruit_SSD1306.h!");
-#endif
-
+//alert light - 4
+#define ALERT_PIN 4
 
 //=== Sleep mode cmd ================================-
 
@@ -98,7 +109,6 @@ RET_STATUS SettingModule(struct CFGstruct *pCFG)
 
 RET_STATUS ReceiveMsg(uint8_t *pdatabuf, uint8_t *data_len)
 {
-
   RET_STATUS STATUS = RET_SUCCESS;
   uint8_t idx;
 
@@ -164,22 +174,6 @@ void blinkLED()
   LedStatus = !LedStatus;
 }
 
-//for the oled screen
-void displayText(long duration, bool hasDelay=true) {
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextColor(WHITE);
-  display.setCursor(0, 0);
-  display.println(displayString);
-  display.display();
-  if (hasDelay)
-  {
-    delay(duration);
-    display.clearDisplay();
-    display.display();
-  }
-}
-
 /********************************************************************
 *
 *   MAIN PROGRAMME
@@ -221,27 +215,93 @@ void setup()
   if(STATUS == RET_SUCCESS)
   Serial.println("Setup init OK!!");
 
-  //OLED
-  // by default, we'll generate the high voltage from the 3.3v line internally! (neat!)
-  display.begin(SSD1306_SWITCHCAPVCC, 0x3C);  // initialize with the I2C addr 0x3C (for the 64x48)
-  // init done
-
-  display.clearDisplay(); //prevent adafruit splash screen
-  display.display();
   #ifdef Device_A
-  displayString = "MEDICAL\n STATION";
   digitalWrite(ALERT_PIN, HIGH);
+  screenModeNum = 6; //default screen for Device A (medical station): on standby
   #else
-  displayString = "USER\n STATION";
+  screenModeNum = 0; //default screen for Device B (user station): instructions to press button
   #endif
-  displayText(2000);
 }
 
-// The loop function is called in an endless loop
+void u8g_prepare(void) {
+  u8g.setFont(u8g_font_6x10);
+  u8g.setFontRefHeightExtendedText();
+  u8g.setDefaultForegroundColor();
+  u8g.setFontPosTop();
+}
+
+void draw() {
+  u8g_prepare();
+  switch(screenModeNum) {
+
+    case(0): //user station default: instructions on pressing emergency button
+    u8g.drawStr(14, 8, "EMERGENCY BUTTON");
+    if (isShow) {
+      u8g.setScale2x2();
+      u8g.drawStr(4, 12, "PRESS FOR");
+      u8g.drawStr(20, 20, "HELP");
+      u8g.undoScale();
+    }
+    break;
+
+    case(1): //user station: after pressing emergency button
+    u8g.drawStr(24, 20, "Help requested");
+    u8g.drawStr(4, 32, "Waiting for response");
+    if (isShow) {
+      u8g.drawStr(52, 44, "...");
+    }
+    break;
+
+    case(2): //user station: message acknowledged
+    u8g.drawStr(4, 20, "Message acknowledged");
+    u8g.drawStr(12, 32, "Help is on the way");
+    break;
+
+    case(3): //user station: sending again
+    u8g.drawStr(24, 24, "Sending again");
+    break;
+
+    case(4): //medical station: instructions to acknowledge
+    u8g.drawStr(8, 2, "Help requested at");
+    u8g.drawStr(24, 12, "station #XX");
+    if (isShow) {
+      u8g.setScale2x2();
+      u8g.drawStr(8, 12, "PRESS TO");
+      u8g.drawStr(0, 20, "ACKNOWLEDGE");
+      u8g.undoScale();
+    }
+    break;
+
+    case(5): //medical station: Acknowledgement sent
+    u8g.drawStr(20, 18, "Acknowledgement");
+    u8g.drawStr(48, 30, "sent");
+    break;
+
+    case(6): //medical station default: on standby
+    u8g.drawStr(32, 24, "On standby");
+    if (isShow) {
+      u8g.drawStr(94, 24, "...");
+    }
+    break;
+  }
+}
+
 void loop()
 {
   uint8_t data_buf[100], data_len;
 
+  // picture loop
+  u8g.firstPage();
+  do {
+    draw();
+  } while ( u8g.nextPage() );
+
+  // for blinking effect
+  if (millis() - lastShownTime > 1000)
+  {
+    isShow = !isShow;
+    lastShownTime = millis();
+  }
   /*************************************************
   * MEDICAL STATION
   *************************************************/
@@ -253,17 +313,9 @@ void loop()
     // blinkLED();
     digitalWrite(ALERT_PIN, HIGH);
 
-    displayString = "";
-    for (int i=0; i<sizeof(data_len); i++)
-    {
-      displayString += data_buf[i];
-    }
-    String prependStr = "Help\nrequested\nat station\n     #";
-    displayString = prependStr + displayString;
+    screenModeNum = 4;
 
-    displayText(0,false);
-    // Serial.print("Message received: ");
-    // Serial.println(displayString);
+    Serial.println("Message received: ");
   }
   else if (hasRcvdSignal==true && hasResponded==false)
   {
@@ -280,8 +332,10 @@ void loop()
 
       SwitchMode(MODE_2_POWER_SAVING);
 
-      displayString = "\nAcknowledgement\n\nsent!";
-      displayText(1000);
+      screenModeNum = 5;
+      acknowledgeButtonPressTime = millis();
+
+      Serial.print("Acknowledgement sent!");
     }
   }
   else if (hasRcvdSignal==true and hasResponded==true)
@@ -291,8 +345,10 @@ void loop()
   }
   else
   {
-    displayString = "on standby";
-    displayText(0, false);
+    if (millis() - acknowledgeButtonPressTime > 4000)
+    {
+      screenModeNum = 6;
+    }
     digitalWrite(ALERT_PIN, LOW);
     // Serial.println("on standby");
   }
@@ -304,6 +360,7 @@ void loop()
   if (button.uniquePress() && hasActivatedSignal == false && isHelpComing == false)
   {
     hasActivatedSignal = true;
+    emergencyButtonPressTime = millis();
 
     SwitchMode(MODE_1_WAKE_UP);
 
@@ -311,66 +368,49 @@ void loop()
     {
       Serial.print("Message sent: ");
       Serial.println(SOSmsg);
-
       sendTime = millis();
     }
   }
   else if (hasActivatedSignal == true && isHelpComing == false)
   {
-    displayString = "Help\nrequested.\nWaiting\nfor\nresponse";
-    displayText(0,false);
+    if (millis() - sendTime < 2000 && millis() - emergencyButtonPressTime > 2000) {
+      screenModeNum = 3; //notify sent again
+    } else {
+      screenModeNum = 1;
+    }
 
-    if (ReceiveMsg(data_buf, &data_len)==RET_SUCCESS)
+    if (ReceiveMsg(data_buf, &data_len)==RET_SUCCESS) //acknowledge by medical station
     {
       if (*data_buf == 255)
       {
-        displayString = "Message\nacknowledged.\nHelp is on\nthe way.";
+        screenModeNum = 2;
+        acknowledgeButtonPressTime = millis();
         Serial.println("Message acknowledged");
         isHelpComing = true;
-        displayText(4000);
       }
     }
     else if (millis() - sendTime > SENDINTERVAL) //send again if not received response
     {
       SendMsg(SOSmsg);
       sendTime = millis();
-      displayString = "Sending\nagain ...";
       Serial.print("Message sent: ");
       Serial.println(SOSmsg);
-      displayText(1000);
     }
   }
   else if (hasActivatedSignal == true && isHelpComing == true)
   {
-    isHelpComing = false; //reset
-    hasActivatedSignal = false;
-    Serial.println("resetting");
-    SwitchMode(MODE_2_POWER_SAVING);
+    if (millis() - acknowledgeButtonPressTime > 4000) //time to show help coming message
+    {
+      screenModeNum = 0; //back to default
+      isHelpComing = false; //reset
+      hasActivatedSignal = false;
+      Serial.println("resetting");
+      SwitchMode(MODE_2_POWER_SAVING);
+    }
   }
   else
   {
-    displayString = "on standby";
-    displayText(0, false);
+    screenModeNum = 0;
   }
   #endif
-
-  /*
-  uint8_t data_buf[100], data_len;
-
-  #ifdef Device_A
-  if(ReceiveMsg(data_buf, &data_len)==RET_SUCCESS)
-  {
-    blinkLED();
-    // Serial.println("Message received");
-  }
-  #else
-  if(SendMsg()==RET_SUCCESS)
-  {
-    blinkLED();
-    // Serial.print("Message sent");
-  }
-  #endif
-
-  delay(random(400, 600));
-  */
 }
