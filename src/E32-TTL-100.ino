@@ -38,8 +38,8 @@
 */
 
 //USER NEEDS TO SPECIFY WHICH DEVICE THIS CODE IS FOR BY COMMENTING OUT ONE BELOW
-#define Device_A // receiver (medical station with 'respond-to-distress' button)
-// #define Device_B // sender (user station with 'call-for-help' button)
+// #define Device_A // receiver (medical station with 'respond-to-distress' button)
+#define Device_B // sender (user station with 'call-for-help' button)
 
 #include <SoftwareSerial.h>
 #include <E32-TTL-100.h>
@@ -71,7 +71,7 @@ Button button = Button(3, PULLUP);
 bool hasActivatedSignal, isHelpComing;//User station
 bool hasRcvdSignal, hasResponded; //Medical station
 unsigned long sendTime; //User station. Send every sendInterval if no reply
-const long SENDINTERVAL = 10000;
+const long SENDINTERVAL = 16000;
 uint8_t SOSmsg = 1; //0 - 255. User station number
 
 //alert light - 4
