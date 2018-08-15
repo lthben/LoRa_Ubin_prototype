@@ -216,7 +216,7 @@ void setup()
   Serial.println("Setup init OK!!");
 
   #ifdef Device_A
-  digitalWrite(ALERT_PIN, HIGH);
+  digitalWrite(ALERT_PIN, LOW);
   screenModeNum = 6; //default screen for Device A (medical station): on standby
   #else
   screenModeNum = 0; //default screen for Device B (user station): instructions to press button
@@ -315,7 +315,7 @@ void loop()
 
     screenModeNum = 4;
 
-    Serial.println("Message received: ");
+    Serial.println("Message received.");
   }
   else if (hasRcvdSignal==true && hasResponded==false)
   {
@@ -325,17 +325,21 @@ void loop()
 
       hasResponded = true;
 
-      SwitchMode(MODE_0_NORMAL);
+      SwitchMode(MODE_1_WAKE_UP);
 
       uint8_t ack = 255;
-      SendMsg(ack);
+      if (SendMsg(ack) == RET_SUCCESS) {
 
-      SwitchMode(MODE_2_POWER_SAVING);
+        screenModeNum = 5;
+        acknowledgeButtonPressTime = millis();
 
-      screenModeNum = 5;
-      acknowledgeButtonPressTime = millis();
-
-      Serial.print("Acknowledgement sent!");
+        Serial.println("Acknowledgement sent!");
+        SwitchMode(MODE_2_POWER_SAVING);
+      }
+      else
+      {
+          Serial.println("Failed to send!");
+      }
     }
   }
   else if (hasRcvdSignal==true and hasResponded==true)
